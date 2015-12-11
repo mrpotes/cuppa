@@ -43,6 +43,7 @@ public interface Reporter {
     enum Outcome {
         PASSED,
         FAILED,
-        ERRORED
+        ERRORED,
+        SKIPPED
     }
 }
