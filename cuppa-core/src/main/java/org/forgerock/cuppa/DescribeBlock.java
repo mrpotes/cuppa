@@ -1,5 +1,6 @@
 package org.forgerock.cuppa;
 
+import static org.forgerock.cuppa.Behaviour.ONLY;
 import static org.forgerock.cuppa.Reporter.Outcome.ERRORED;
 
 import java.util.ArrayList;
@@ -29,11 +30,12 @@ class DescribeBlock {
         this.description = description;
     }
 
-    void runTests(Reporter reporter) {
-        runTests(behaviour, reporter, TestFunction::apply);
+    void runTests(boolean ignoreTestsNotMarkedAsOnly, Reporter reporter) {
+        runTests(ignoreTestsNotMarkedAsOnly, behaviour, reporter, TestFunction::apply);
     }
 
-    private void runTests(Behaviour behaviour, Reporter reporter, TestWrapper outerTestWrapper) {
+    private void runTests(boolean ignoreTestsNotMarkedAsOnly, Behaviour behaviour, Reporter reporter,
+            TestWrapper outerTestWrapper) {
         Behaviour combinedBehaviour = behaviour.combine(this.behaviour);
         TestWrapper testWrapper = createWrapper(outerTestWrapper, reporter);
         try {
@@ -47,9 +49,14 @@ class DescribeBlock {
                 return;
             }
             for (TestBlock t : testBlocks) {
-                testWrapper.apply(() -> t.runTest(combinedBehaviour, reporter));
+                if ((ignoreTestsNotMarkedAsOnly && combinedBehaviour.combine(t.getBehaviour()) == ONLY)
+                        || !ignoreTestsNotMarkedAsOnly) {
+                    testWrapper.apply(() -> t.runTest(combinedBehaviour, reporter));
+                }
             }
-            describeBlocks.stream().forEach((d) -> d.runTests(combinedBehaviour, reporter, testWrapper));
+            describeBlocks.stream().forEach((d) -> {
+                d.runTests(ignoreTestsNotMarkedAsOnly, combinedBehaviour, reporter, testWrapper);
+            });
         } catch (HookException e) {
             if (e.getDescribeBlock() != this) {
                 throw e;
@@ -59,13 +66,7 @@ class DescribeBlock {
             // been caught by now.
             throw new RuntimeException(e);
         } finally {
-            try {
-                for (HookFunction f : afterFunctions) {
-                    f.apply();
-                }
-            } catch (Exception e) {
-                reporter.testOutcome("after", ERRORED);
-            }
+            runAfterHooks(reporter);
             reporter.describeEnd(description);
         }
     }
@@ -117,6 +118,22 @@ class DescribeBlock {
 
     void addTest(TestBlock testBlock) {
         testBlocks.add(testBlock);
+    }
+
+    boolean hasOnlyTests() {
+        return behaviour == ONLY
+            || testBlocks.stream().anyMatch(t -> t.getBehaviour() == ONLY)
+            || describeBlocks.stream().anyMatch(DescribeBlock::hasOnlyTests);
+    }
+
+    private void runAfterHooks(Reporter reporter) {
+        try {
+            for (HookFunction f : afterFunctions) {
+                f.apply();
+            }
+        } catch (Exception e) {
+            reporter.testOutcome("after", ERRORED);
+        }
     }
 
     @FunctionalInterface
